@@ -39,7 +39,7 @@ void findSimilarImages(const std::string& folderPath) {
         const std::string filePath = entry.path().string();
 
         // Проверка, является ли файл изображением (можно использовать расширения файлов или другие признаки)
-        // Если файл является изображением, загрузите его с помощью OpenCV и обработайте
+        // Если файл является изображением, загрузите его с помощью OpenCV и обработать
         if (fs::is_regular_file(entry) && (entry.path().extension() == ".jpg" || entry.path().extension() == ".png")) {
             cv::Mat image = cv::imread(filePath);
             if (!image.empty()) {
@@ -56,8 +56,7 @@ void findSimilarImages(const std::string& folderPath) {
         return;
     }
 
-    // Выполнение сравнения изображения с другими ранее найденными изображениями
-    // и вывод процента схожести
+    // Выполнение сравнения изображения с другими ранее найденными изображениями  и вывод процента схожести
     for (int i = 0; i < numImages; ++i) {
         for (int j = i + 1; j < numImages; ++j) {
             double similarity = compareImages(loadedImages[i], loadedImages[j]);
