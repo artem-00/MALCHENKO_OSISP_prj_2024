@@ -38,7 +38,7 @@ void findSimilarImages(const std::string& folderPath) {
     for (const auto& entry : fs::directory_iterator(folderPath)) {
         const std::string filePath = entry.path().string();
 
-        // Проверка, является ли файл изображением (можно использовать расширения файлов или другие признаки)
+        // Проверка, является ли файл изображением
         // Если файл является изображением, загрузите его с помощью OpenCV и обработать
         if (fs::is_regular_file(entry) && (entry.path().extension() == ".jpg" || entry.path().extension() == ".png")) {
             cv::Mat image = cv::imread(filePath);
