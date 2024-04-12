@@ -1,65 +1,79 @@
 #include <iostream>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
 
-using namespace cv;
-using namespace std;
+namespace fs = std::filesystem;
 
-// Функция для вычисления гистограммы изображения
-Mat computeHistogram(Mat image) {
-    Mat hist;
+// Функция для сравнения изображений
+double compareImages(const cv::Mat& image1, const cv::Mat& image2) {
+    cv::Mat hist1, hist2;
+    cv::cvtColor(image1, hist1, cv::COLOR_BGR2HSV);
+    cv::cvtColor(image2, hist2, cv::COLOR_BGR2HSV);
+
+    // Вычисление гистограммы изображений
     int histSize = 256;
-    float range[] = {0, 256}; // полный диапазон пиксельных значений
-    const float *histRange = {range};
-    bool uniform = true;
-    bool accumulate = false;
-    calcHist(&image, 1, 0, Mat(), hist, 1, &histSize, &histRange, uniform, accumulate);
-    return hist;
-}
+    float hRanges[] = { 0, 180 };
+    const float* ranges[] = { hRanges };
+    int channels[] = { 0 };
+    cv::MatND histImage1, histImage2;
+    cv::calcHist(&hist1, 1, channels, cv::Mat(), histImage1, 1, &histSize, ranges, true, false);
+    cv::calcHist(&hist2, 1, channels, cv::Mat(), histImage2, 1, &histSize, ranges, true, false);
 
-// Функция для вычисления контуров изображения
-vector<vector<Point>> computeContours(Mat image) {
-    Mat gray;
-    cvtColor(image, gray, COLOR_BGR2GRAY); // конвертируем изображение в оттенки серого
-    Mat edges;
-    Canny(gray, edges, 100, 200); // используем алгоритм Canny для поиска контуров
-    vector<vector<Point>> contours;
-    findContours(edges, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE); // находим контуры
-    return contours;
-}
+    // Нормализация гистограмм
+    cv::normalize(histImage1, histImage1, 0, 1, cv::NORM_MINMAX, -1, cv::Mat());
+    cv::normalize(histImage2, histImage2, 0, 1, cv::NORM_MINMAX, -1, cv::Mat());
 
-// Функция для сравнения гистограмм двух изображений
-double compareHistograms(Mat hist1, Mat hist2) {
-    return compareHist(hist1, hist2, HISTCMP_CORREL); // корреляция гистограмм
-}
+    // Вычисление коэффициента схожести (нормализованное расстояние Чебышева)
+    double similarity = cv::compareHist(histImage1, histImage2, cv::HISTCMP_INTERSECT);
 
-// Функция для сравнения контуров двух изображений
-double compareContours(vector<vector<Point>> contours1, vector<vector<Point>> contours2) {
-    double similarity = matchShapes(contours1[0], contours2[0], CONTOURS_MATCH_I1, 0); // сравнение контуров
     return similarity;
 }
 
-int main() {
-    // Пример изображений для сравнения
-    Mat image1 = imread("image1.jpg");
-    Mat image2 = imread("image2.jpg");
+// Функция для поиска и обработки похожих изображений
+void findSimilarImages(const std::string& folderPath) {
+    // Обход папки и поиск изображений
+    std::vector<cv::Mat> loadedImages;
+    std::vector<std::string> imagePaths;
 
-    if (image1.empty() || image2.empty()) {
-        cout << "Не удалось загрузить изображения." << endl;
-        return -1;
+    for (const auto& entry : fs::directory_iterator(folderPath)) {
+        const std::string filePath = entry.path().string();
+
+        // Проверка, является ли файл изображением (можно использовать расширения файлов или другие признаки)
+        // Если файл является изображением, загрузите его с помощью OpenCV и обработайте
+        if (fs::is_regular_file(entry) && (entry.path().extension() == ".jpg" || entry.path().extension() == ".png")) {
+            cv::Mat image = cv::imread(filePath);
+            if (!image.empty()) {
+                loadedImages.push_back(image);
+                imagePaths.push_back(filePath);
+            }
+        }
     }
 
-    // Вычисляем гистограммы и контуры для изображений
-    Mat hist1 = computeHistogram(image1);
-    Mat hist2 = computeHistogram(image2);
-    vector<vector<Point>> contours1 = computeContours(image1);
-    vector<vector<Point>> contours2 = computeContours(image2);
+    const int numImages = loadedImages.size();
 
-    // Сравниваем гистограммы и контуры
-    double histSimilarity = compareHistograms(hist1, hist2);
-    double contourSimilarity = compareContours(contours1, contours2);
+    if (numImages == 0) {
+        std::cout << "No images found in the directory." << std::endl;
+        return;
+    }
 
-    cout << "Схожесть гистограмм: " << histSimilarity << endl;
-    cout << "Схожесть контуров: " << contourSimilarity << endl;
+    // Выполнение сравнения изображения с другими ранее найденными изображениями
+    // и вывод процента схожести
+    for (int i = 0; i < numImages; ++i) {
+        for (int j = i + 1; j < numImages; ++j) {
+            double similarity = compareImages(loadedImages[i], loadedImages[j]);
+            std::cout << "Similarity between " << imagePaths[i] << " and " << imagePaths[j] << ": " << similarity * 100 << "%" << std::endl;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cout << "Usage: ./image_similarity <folder_path>" << std::endl;
+        return 1;
+    }
+
+    std::string folderPath = argv[1];
+    findSimilarImages(folderPath);
 
     return 0;
 }
