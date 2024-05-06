@@ -1,83 +1,131 @@
-#include <iostream>
-#include <filesystem>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <math.h>
 #include <opencv2/opencv.hpp>
 
-namespace fs = std::filesystem;
+#define MAX_PATH_LENGTH 512
+#define MAX_FILENAME_LENGTH 256
+#define HISTOGRAM_SIZE 256
 
-// Функция для сравнения изображений
-double compareImages(const cv::Mat& image1, const cv::Mat& image2) {
-    cv::Mat hist1, hist2;
-    cv::cvtColor(image1, hist1, cv::COLOR_BGR2HSV);
-    cv::cvtColor(image2, hist2, cv::COLOR_BGR2HSV);
+// Функция для вычисления гистограммы изображения
+void calculateHistogram(cv::Mat image, int* hist) {
+    // Инициализация гистограммы
+    for (int i = 0; i < HISTOGRAM_SIZE; ++i) {
+        hist[i] = 0;
+    }
 
-    // Вычисление гистограммы изображений
-    int histSize = 256;
-    float hRanges[] = { 0, 180 };
-    const float* ranges[] = { hRanges };
-    int channels[] = { 0 };
-    cv::MatND histImage1, histImage2;
-    cv::calcHist(&hist1, 1, channels, cv::Mat(), histImage1, 1, &histSize, ranges, true, false);
-    cv::calcHist(&hist2, 1, channels, cv::Mat(), histImage2, 1, &histSize, ranges, true, false);
+    // Проход по каждому пикселю изображения и увеличение соответствующего бина в гистограмме
+    for (int y = 0; y < image.rows; ++y) {
+        for (int x = 0; x < image.cols; ++x) {
+            int pixelValue = image.at<uchar>(y, x);
+            hist[pixelValue]++;
+        }
+    }
+}
 
-    // Нормализация гистограмм
-    cv::normalize(histImage1, histImage1, 0, 1, cv::NORM_MINMAX, -1, cv::Mat());
-    cv::normalize(histImage2, histImage2, 0, 1, cv::NORM_MINMAX, -1, cv::Mat());
+// Функция для нормализации гистограммы
+void normalizeHistogram(int* hist, int size) {
+    // Поиск максимального значения в гистограмме
+    int maxCount = 0;
+    for (int i = 0; i < size; ++i) {
+        if (hist[i] > maxCount) {
+            maxCount = hist[i];
+        }
+    }
 
-    // Вычисление коэффициента схожести (нормализованное расстояние Чебышева)
-    double similarity = cv::compareHist(histImage1, histImage2, cv::HISTCMP_BHATTACHARYYA);
+    // Нормализация значений в гистограмме
+    for (int i = 0; i < size; ++i) {
+        hist[i] = hist[i] / (double)maxCount;
+    }
+}
+
+// Функция для сравнения гистограмм изображений
+double compareHistograms(int* hist1, int* hist2, int size) {
+    // Вычисление суммы квадратов разностей между значениями бинов
+    int sumOfSquares = 0;
+    for (int i = 0; i < size; ++i) {
+        int diff = hist1[i] - hist2[i];
+        sumOfSquares += diff * diff;
+    }
+
+    // Вычисление коэффициента схожести (нормализованная Евклидова норма)
+    double similarity = sqrt(sumOfSquares);
 
     return similarity;
 }
 
 // Функция для поиска и обработки похожих изображений
-void findSimilarImages(const std::string& folderPath) {
-    // Проверка существования пути к папке
-    if (!fs::exists(folderPath)) {
-        std::cout << "Folder path does not exist." << std::endl;
+void findSimilarImages(const char* folderPath) {
+    DIR* dir;
+    struct dirent* entry;
+    char imagePath[MAX_PATH_LENGTH];
+    cv::Mat images[MAX_FILENAME_LENGTH];
+    char imageNames[MAX_FILENAME_LENGTH][MAX_FILENAME_LENGTH];
+    int imageCount = 0;
+
+    // Открытие указанной папки
+    dir = opendir(folderPath);
+    if (dir == NULL) {
+        fprintf(stderr, "Failed to open folder.\n");
         return;
     }
 
-    // Обход папки и поиск изображений
-    std::vector<cv::Mat> loadedImages;
-    std::vector<std::string> imagePaths;
-
-    for (const auto& entry : fs::directory_iterator(folderPath)) {
-        const std::string filePath = entry.path().string();
-
-        // Проверка, является ли файл изображением
-        // Если файл является изображением, загрузите его с помощью OpenCV и обработать
-        if (fs::is_regular_file(entry) && (entry.path().extension() == ".jpg" || entry.path().extension() == ".png" || entry.path().extension() == ".jpeg")) {
-            cv::Mat image = cv::imread(filePath);
+    // Чтение изображений из указанной папки
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {
+            snprintf(imagePath, MAX_PATH_LENGTH, "%s/%s", folderPath, entry->d_name);
+            cv::Mat image = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
             if (!image.empty()) {
-                loadedImages.push_back(image);
-                imagePaths.push_back(filePath);
+                images[imageCount] = image;
+                strncpy(imageNames[imageCount], entry->d_name, MAX_FILENAME_LENGTH);
+                imageCount++;
             }
         }
     }
+    closedir(dir);
 
-    const int numImages = loadedImages.size();
-
-    if (numImages == 0) {
-        std::cout << "No images found in the directory." << std::endl;
+    // Проверка, что найдено не менее двух изображений
+    if (imageCount < 2) {
+        fprintf(stderr, "Not enough images found in the folder.\n");
         return;
     }
 
-    // Выполнение сравнения изображения с другими ранее найденными изображениями  и вывод процента схожести
-    for (int i = 0; i < numImages; ++i) {
-        for (int j = i + 1; j < numImages; ++j) {
-            double similarity = compareImages(loadedImages[i], loadedImages[j]);
-            std::cout << "Similarity between " << imagePaths[i] << " and " << imagePaths[j] << ": " << (1 - similarity) * 100 << "%" << std::endl;
+    // Сравнение каждой пары изображений
+    for (int i = 0; i < imageCount; ++i) {
+        for (int j = i + 1; j < imageCount; ++j) {
+            int hist1[HISTOGRAM_SIZE];
+            int hist2[HISTOGRAM_SIZE];
+
+            calculateHistogram(images[i], hist1);
+            calculateHistogram(images[j], hist2);
+
+            normalizeHistogram(hist1, HISTOGRAM_SIZE);
+            normalizeHistogram(hist2, HISTOGRAM_SIZE);
+
+            double similarity = compareHistograms(hist1, hist2, HISTOGRAM_SIZE);
+            if (similarity == 0){
+                printf("photo %s and photo %s are similar\n", imageNames[i], imageNames[j]);
+            }else {
+                printf("photo %s and photo %s are NOT similar\n", imageNames[i], imageNames[j]);
+            }
+        
         }
     }
 }
 
 int main(int argc, char* argv[]) {
+    // Проверка, что передан достаточно аргументов командной строки
     if (argc < 2) {
-        std::cout << "Usage: ./image_similarity <folder_path>" << std::endl;
+        fprintf(stderr, "Usage: %s <folder_path>\n", argv[0]);
         return 1;
     }
-    //g++ -g /home/artem/Documents/KP/similar_images.cpp -o /home/artem/Documents/KP/similar_images `pkg-config --cflags --libs opencv4`
-    std::string folderPath = argv[1];
+
+    // Получение пути к папке из аргументов командной строки
+    const char* folderPath = argv[1];
+
+    // Вызов функции для поиска и обработки похожих изображений
     findSimilarImages(folderPath);
 
     return 0;
